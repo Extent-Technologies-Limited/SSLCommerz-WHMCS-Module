@@ -1,0 +1,23 @@
+{
+  "schema": "1.0",
+  "type": "whmcs-addons",
+  "name": "sslcommerz_lookup",
+  "version": "1.0.0",
+  "license": "MIT",
+  "category": "utilities",
+  "description": {
+    "name": "SSLCommerz Transaction Lookup",
+    "tagline": "Search, inspect, and reconcile SSLCommerz transactions with full v4 API support.",
+    "long": "A responsive administrator dashboard for recent transactions, multi-field search, focused transaction details, refund status queries, and formula-safe CSV export. Customer-currency amounts and settled BDT amounts are displayed independently."
+  },
+  "support": {
+    "homepage": "https://sslcommerz.com",
+    "docs_url": "https://developer.sslcommerz.com/doc/v4/"
+  },
+  "authors": [
+    {
+      "name": "Extent Technologies Limited",
+      "homepage": "https://extentit.com"
+    }
+  ]
+}

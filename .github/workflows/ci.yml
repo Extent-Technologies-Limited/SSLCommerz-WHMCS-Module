@@ -1,0 +1,107 @@
+name: Validate and package
+
+on:
+  push:
+    branches:
+      - "**"
+    tags:
+      - "v*"
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: PHP ${{ matrix.php }} lint
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        php: ["7.4", "8.1", "8.2", "8.3"]
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v7
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php }}
+          extensions: curl, json, zip
+          coverage: none
+
+      - name: Lint module PHP files
+        shell: bash
+        run: |
+          set -euo pipefail
+          find modules -type f -name '*.php' -print0 \
+            | xargs -0 -n1 php -l
+
+  package:
+    name: Build release archive
+    needs: lint
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v7
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.3"
+          extensions: zip
+          coverage: none
+
+      - name: Build archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(php -r '$manifest = json_decode(file_get_contents("modules/gateways/sslcommerz/whmcs.json"), true); echo $manifest["version"];')"
+          archive="dist/SSLCommerz-WHMCS-Module-${version}.zip"
+          mkdir -p dist
+          zip -q -r "$archive" modules README.md CHANGELOG.md LICENSE
+          unzip -t "$archive"
+
+      - name: Upload archive
+        uses: actions/upload-artifact@v7
+        with:
+          name: SSLCommerz-WHMCS-Module
+          path: dist/*.zip
+          if-no-files-found: error
+
+  release:
+    name: Publish tagged release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: package
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v7
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.3"
+          extensions: zip
+          coverage: none
+
+      - name: Build release archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(php -r '$manifest = json_decode(file_get_contents("modules/gateways/sslcommerz/whmcs.json"), true); echo $manifest["version"];')"
+          archive="dist/SSLCommerz-WHMCS-Module-${version}.zip"
+          mkdir -p dist
+          zip -q -r "$archive" modules README.md CHANGELOG.md LICENSE
+          unzip -t "$archive"
+
+      - name: Publish tagged release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" dist/*.zip --title "$GITHUB_REF_NAME" --generate-notes
