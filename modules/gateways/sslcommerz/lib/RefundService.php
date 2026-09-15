@@ -56,8 +56,20 @@ class SslCommerzRefundService
                 throw new RuntimeException('The captured bank transaction ID is unavailable.');
             }
 
+            $sourceAmount = isset($params['amount']) ? $params['amount'] : 0;
+            $recoverable = $this->ledger->recoverRefund(array(
+                'payment_identifier'=>$transId,'invoice_id'=>$invoiceId,
+                'source_amount'=>$sourceAmount,'source_currency'=>$currency,
+            ));
+            if ($recoverable && !empty($recoverable->refund_ref_id)) {
+                return array(
+                    'status'=>'success','transid'=>(string)$recoverable->refund_ref_id,
+                    'rawdata'=>array('status'=>'idempotent_recovery'),
+                );
+            }
+
             $refundBdt = SslCommerzPaymentRules::refundAmountBdt(
-                isset($params['amount']) ? $params['amount'] : 0,
+                $sourceAmount,
                 isset($capture['currency']) ? $capture['currency'] : $currency,
                 isset($capture['invoice_amount']) ? $capture['invoice_amount'] : 0,
                 isset($capture['bdt_amount']) ? $capture['bdt_amount'] : 0,
@@ -70,7 +82,7 @@ class SslCommerzRefundService
             $refundTransId = SslCommerzSupport::refundTransactionId($invoiceId);
             $reservation = $this->ledger->reserveRefund(array(
                 'payment_identifier'=>$transId,'invoice_id'=>$invoiceId,
-                'source_amount'=>isset($params['amount'])?$params['amount']:0,'source_currency'=>$currency,
+                'source_amount'=>$sourceAmount,'source_currency'=>$currency,
                 'desired_bdt'=>$refundBdt,'refund_trans_id'=>$refundTransId,
             ));
             $refundTransId = (string)$reservation->refund_trans_id;

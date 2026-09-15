@@ -163,30 +163,42 @@ class SslCommerzLedger
     {
         if (empty($transaction['tran_id'])) { return false; }
         $tranId = (string)$transaction['tran_id'];
-        $currency = strtoupper(isset($transaction['currency_type']) ? (string)$transaction['currency_type'] : (isset($transaction['currency']) ? (string)$transaction['currency'] : ''));
+        $currency = strtoupper(trim(isset($transaction['currency_type']) ? (string)$transaction['currency_type'] : (isset($transaction['currency']) ? (string)$transaction['currency'] : '')));
         $invoiceAmount = isset($transaction['currency_amount']) && (float)$transaction['currency_amount'] > 0
-            ? (float)$transaction['currency_amount'] : (isset($transaction['amount']) ? (float)$transaction['amount'] : 0);
+            ? (float)$transaction['currency_amount'] : 0;
+        $bdtAmount = isset($transaction['amount']) && (float)$transaction['amount'] > 0 ? (float)$transaction['amount'] : 0;
+        if ($invoiceAmount <= 0 && $currency === 'BDT') { $invoiceAmount = $bdtAmount; }
         $safeTransaction = class_exists('SslCommerzSupport') ? SslCommerzSupport::redact($transaction) : $transaction;
-        $fields = array(
-            'invoice_id'=>isset($transaction['value_a'])?(int)$transaction['value_a']:0,
-            'val_id'=>isset($transaction['val_id'])?$transaction['val_id']:null,
-            'bank_tran_id'=>isset($transaction['bank_tran_id'])?$transaction['bank_tran_id']:null,
-            'sessionkey'=>$sessionKey ?: (isset($transaction['sessionkey'])?$transaction['sessionkey']:null),
-            'status'=>strtolower(isset($transaction['status'])?$transaction['status']:'unknown'),
-            'currency'=>$currency,'invoice_amount'=>$invoiceAmount,
-            'bdt_amount'=>isset($transaction['amount'])?(float)$transaction['amount']:0,
-            'currency_rate_bdt'=>$invoiceAmount > 0 && isset($transaction['amount']) ? round((float)$transaction['amount']/$invoiceAmount,8) : 0,
-            'card_no'=>isset($transaction['card_no'])?$transaction['card_no']:null,
-            'card_type'=>isset($transaction['card_type'])?$transaction['card_type']:null,
-            'card_brand'=>isset($transaction['card_brand'])?$transaction['card_brand']:null,
-            'card_issuer'=>isset($transaction['card_issuer'])?$transaction['card_issuer']:null,
-            'risk_level'=>isset($transaction['risk_level'])?(int)$transaction['risk_level']:0,
-            'risk_title'=>isset($transaction['risk_title'])?$transaction['risk_title']:null,
-            'raw_response'=>json_encode($safeTransaction),
-        );
+        $fields = array('raw_response'=>json_encode($safeTransaction));
+        if (isset($transaction['value_a']) && (int)$transaction['value_a'] > 0) { $fields['invoice_id'] = (int)$transaction['value_a']; }
+        foreach (array('val_id','bank_tran_id') as $identifier) {
+            if (isset($transaction[$identifier]) && trim((string)$transaction[$identifier]) !== '') {
+                $fields[$identifier] = trim((string)$transaction[$identifier]);
+            }
+        }
+        $resolvedSessionKey = trim((string)($sessionKey !== null ? $sessionKey : (isset($transaction['sessionkey']) ? $transaction['sessionkey'] : '')));
+        if ($resolvedSessionKey !== '') { $fields['sessionkey'] = $resolvedSessionKey; }
+        if (isset($transaction['status']) && trim((string)$transaction['status']) !== '') {
+            $fields['status'] = strtolower(trim((string)$transaction['status']));
+        }
+        if ($currency !== '') { $fields['currency'] = $currency; }
+        if ($invoiceAmount > 0) { $fields['invoice_amount'] = $invoiceAmount; }
+        if ($bdtAmount > 0) { $fields['bdt_amount'] = $bdtAmount; }
+        if ($invoiceAmount > 0 && $bdtAmount > 0) {
+            $fields['currency_rate_bdt'] = $currency === 'BDT' ? 1 : round($bdtAmount/$invoiceAmount, 8);
+        }
+        foreach (array('card_no','card_type','card_brand','card_issuer','risk_title') as $detail) {
+            if (isset($transaction[$detail]) && trim((string)$transaction[$detail]) !== '') {
+                $fields[$detail] = $transaction[$detail];
+            }
+        }
+        if (isset($transaction['risk_level']) && is_numeric($transaction['risk_level'])) {
+            $fields['risk_level'] = (int)$transaction['risk_level'];
+        }
         $existing = $this->find($tranId);
         if ($existing) { return $this->update($tranId, $fields); }
-        if ($fields['invoice_id'] <= 0 || $fields['invoice_amount'] <= 0 || $currency === '') { return false; }
+        if (!isset($fields['invoice_id'], $fields['invoice_amount'], $fields['currency'])
+            || $fields['invoice_id'] <= 0 || $fields['invoice_amount'] <= 0 || $fields['currency'] === '') { return false; }
         $fields['tran_id'] = $tranId;
         return $this->begin($fields);
     }
@@ -274,12 +286,6 @@ class SslCommerzLedger
             $currency = strtoupper((string)$request['source_currency']);
             $sourceAmount = round((float)$request['source_amount'], 2);
             $baseRefunded = round((float)$payment->refunded_bdt, 2);
-            $recentSuccess = \WHMCS\Database\Capsule::table(self::REFUND_TABLE)
-                ->where('payment_tran_id', $payment->tran_id)->where('source_currency', $currency)
-                ->where('source_amount', $sourceAmount)->whereIn('status', array('success','processing'))
-                ->where('updated_at', '>=', date('Y-m-d H:i:s', time() - 300))->orderBy('id', 'desc')->first();
-            if ($recentSuccess) { $recentSuccess->replay = true; return $recentSuccess; }
-
             $requestKey = hash('sha256', $payment->tran_id . '|' . $currency . '|' . number_format($sourceAmount,2,'.','') . '|' . number_format($baseRefunded,2,'.',''));
             $existing = \WHMCS\Database\Capsule::table(self::REFUND_TABLE)->where('request_key', $requestKey)->lockForUpdate()->first();
             if ($existing) {
@@ -304,6 +310,33 @@ class SslCommerzLedger
             $row->replay = false;
             return $row;
         });
+    }
+
+    public function recoverRefund(array $request)
+    {
+        $this->ensureSchema();
+        if ($this->adapter) {
+            return method_exists($this->adapter, 'recoverRefund') ? $this->adapter->recoverRefund($request) : null;
+        }
+        $payment = \WHMCS\Database\Capsule::table(self::TABLE)
+            ->where(function ($query) use ($request) {
+                $query->where('tran_id', (string)$request['payment_identifier'])
+                    ->orWhere('bank_tran_id', (string)$request['payment_identifier']);
+            })->first();
+        if (!$payment) { return null; }
+        $candidate = \WHMCS\Database\Capsule::table(self::REFUND_TABLE)
+            ->where('payment_tran_id', $payment->tran_id)
+            ->where('invoice_id', (int)$request['invoice_id'])
+            ->where('source_currency', strtoupper((string)$request['source_currency']))
+            ->where('source_amount', round((float)$request['source_amount'], 2))
+            ->whereIn('status', array('success','processing'))
+            ->whereNotNull('refund_ref_id')->orderBy('id', 'desc')->first();
+        if (!$candidate || trim((string)$candidate->refund_ref_id) === '') { return null; }
+        $recorded = \WHMCS\Database\Capsule::table('tblaccounts')
+            ->where('transid', (string)$candidate->refund_ref_id)->exists();
+        if ($recorded) { return null; }
+        $candidate->replay = true;
+        return $candidate;
     }
 
     public function finalizeRefund($refundTransId, array $result)
@@ -358,10 +391,13 @@ class SslCommerzLedger
         try {
             $columns = $capsule::select("SHOW COLUMNS FROM `" . self::TABLE . "`");
             $names = array();
-            foreach ($columns as $column) { $names[] = $column->Field; }
-            $capsule::statement("ALTER TABLE `" . self::TABLE . "` MODIFY `card_no` VARCHAR(80) NULL");
-            $capsule::statement("ALTER TABLE `" . self::TABLE . "` MODIFY `bank_tran_id` VARCHAR(100) NULL");
-            $capsule::statement("ALTER TABLE `" . self::TABLE . "` MODIFY `val_id` VARCHAR(100) NULL");
+            $byName = array();
+            foreach ($columns as $column) { $names[] = $column->Field; $byName[$column->Field] = $column; }
+            foreach (array('card_no'=>80, 'bank_tran_id'=>100, 'val_id'=>100) as $columnName => $length) {
+                if (isset($byName[$columnName]) && $this->stringColumnNeedsWidening($byName[$columnName], $length)) {
+                    $capsule::statement("ALTER TABLE `" . self::TABLE . "` MODIFY `" . $columnName . "` VARCHAR(" . $length . ") NULL");
+                }
+            }
             if (in_array('invoice_amount', $names, true) && in_array('bdt_amount', $names, true)) {
                 $capsule::statement("UPDATE `" . self::TABLE . "` SET `currency_rate_bdt` = `bdt_amount` / `invoice_amount` WHERE `currency_rate_bdt` = 0 AND `invoice_amount` > 0 AND `bdt_amount` > 0");
             }
@@ -379,6 +415,14 @@ class SslCommerzLedger
         } catch (Throwable $ignored) {
             // Existing duplicate legacy rows should not make the whole gateway unavailable.
         }
+    }
+
+    private function stringColumnNeedsWidening($column, $minimumLength)
+    {
+        $type = isset($column->Type) ? strtolower((string)$column->Type) : '';
+        $nullable = isset($column->Null) && strtoupper((string)$column->Null) === 'YES';
+        if (!preg_match('/^varchar\((\d+)\)/', $type, $matches)) { return true; }
+        return (int)$matches[1] < (int)$minimumLength || !$nullable;
     }
 
     private function ensureRefundTable($capsule)
