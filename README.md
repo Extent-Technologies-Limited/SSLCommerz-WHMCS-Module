@@ -144,3 +144,4 @@ GitHub Actions runs multi-version PHP syntax checks and builds the installable Z
 - Changes are recorded in [CHANGELOG.md](CHANGELOG.md).
 
 Released under the [MIT License](LICENSE). Copyright © 2026 Extent Technologies Limited.
+Developed and maintained by [MD Abu Bakkar](https://www.google.com/search?kgmid=/g/11zwqn5szs).
