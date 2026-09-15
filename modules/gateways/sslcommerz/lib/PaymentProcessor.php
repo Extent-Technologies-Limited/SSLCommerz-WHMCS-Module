@@ -84,23 +84,23 @@ class SslCommerzPaymentProcessor
             'raw_response' => json_encode(SslCommerzSupport::redact($validation)),
         ));
 
-        foreach (array($tranId, $bankTranId) as $candidate) {
-            $existingInvoice = call_user_func($this->callbacks['find_transaction'], $candidate);
-            if ($existingInvoice !== null) {
-                if ((int) $existingInvoice === $invoiceId) {
-                    $this->safeMarkPaid($tranId);
-                    return $this->finish('duplicate', $invoiceId, 'Already Processed', array('transaction_id' => $candidate));
-                }
-                return $this->finish('rejected', $invoiceId, 'Transaction Used By Another Invoice', array('transaction_id' => $candidate, 'existing_invoice' => $existingInvoice));
-            }
-        }
+        $existingResult = $this->existingTransactionResult($tranId, $bankTranId, $invoiceId);
+        if ($existingResult !== null) { return $existingResult; }
 
         $claim = $this->ledger->claim($tranId);
         if ($claim === 'held') {
             return $this->finish('retry', $invoiceId, 'Settlement Is Being Processed', array('tran_id' => $tranId));
         }
         if ($claim === 'unavailable') {
-            $this->log('Ledger Unavailable - WHMCS Guards Active', array('tran_id' => $tranId, 'invoice_id' => $invoiceId));
+            return $this->finish('retry', $invoiceId, 'Settlement Exclusivity Unavailable', array('tran_id' => $tranId));
+        }
+
+        $existingResult = $this->existingTransactionResult($tranId, $bankTranId, $invoiceId);
+        if ($existingResult !== null) {
+            if ($existingResult['code'] === 'rejected') {
+                try { $this->ledger->release($tranId); } catch (Throwable $ignored) {}
+            }
+            return $existingResult;
         }
 
         try {
@@ -129,6 +129,22 @@ class SslCommerzPaymentProcessor
         try { $this->ledger->update($tranId, $fields); } catch (Throwable $error) {
             $this->log('Ledger Update Failed', array('tran_id' => $tranId, 'error' => $error->getMessage()));
         }
+    }
+
+    private function existingTransactionResult($tranId, $bankTranId, $invoiceId)
+    {
+        foreach (array($tranId, $bankTranId) as $candidate) {
+            $existingInvoice = call_user_func($this->callbacks['find_transaction'], $candidate);
+            if ($existingInvoice === null) { continue; }
+            if ((int) $existingInvoice === (int) $invoiceId) {
+                $this->safeMarkPaid($tranId);
+                return $this->finish('duplicate', $invoiceId, 'Already Processed', array('transaction_id' => $candidate));
+            }
+            return $this->finish('rejected', $invoiceId, 'Transaction Used By Another Invoice', array(
+                'transaction_id' => $candidate, 'existing_invoice' => $existingInvoice,
+            ));
+        }
+        return null;
     }
 
     private function safeMarkPaid($tranId)
