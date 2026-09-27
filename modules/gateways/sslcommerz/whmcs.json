@@ -2,16 +2,17 @@
   "schema": "1.0",
   "type": "whmcs-gateways",
   "name": "sslcommerz",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "license": "MIT",
   "category": "payments",
   "description": {
     "name": "SSLCommerz Payment Gateway",
     "tagline": "Bangladesh's first online payment gateway integration for WHMCS with full v4 API support.",
-    "long": "SSLCommerz Payment Gateway module for WHMCS. Implements v4 session creation, order validation, IPN, refunds, idempotent settlement, capture-time currency conversion, and transaction reconciliation. Supports EasyCheckout popup, hosted redirect, and the production new hosted checkout experience.",
+    "long": "SSLCommerz Payment Gateway module for WHMCS. Implements v4 session creation, order validation, IPN, refunds, idempotent settlement, selectable SSLCommerz or WHMCS currency conversion, and transaction reconciliation. Supports EasyCheckout popup, hosted redirect, and the production new hosted checkout experience.",
     "features": [
       "Checkout with SSLCommerz for a faster checkout & payment experience",
       "EasyCheckout Popup and hosted checkout modes",
+      "Selectable SSLCommerz or WHMCS exchange rates",
       "Capture-time BDT currency reconciliation",
       "Transaction ledger with an audit trail",
       "Full and partial refund support"

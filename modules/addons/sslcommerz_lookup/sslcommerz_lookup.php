@@ -18,7 +18,7 @@ function sslcommerz_lookup_config()
     return array(
         'name' => 'SSLCommerz Transaction Lookup',
         'description' => 'Search the local payment ledger, refresh transaction data through the v4 API, export CSV, and query refund status.',
-        'version' => '1.0.0',
+        'version' => '1.0.1',
         'author' => 'Extent Technologies Limited',
         'fields' => array(
             'store_id' => array(

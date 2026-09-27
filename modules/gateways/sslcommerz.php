@@ -23,6 +23,16 @@ function sslcommerz_config()
         'store_id' => array('FriendlyName' => 'Store ID', 'Type' => 'text', 'Size' => '40'),
         'store_password' => array('FriendlyName' => 'Store Password', 'Type' => 'password', 'Size' => '40'),
         'testmode' => array('FriendlyName' => 'Test Mode', 'Type' => 'yesno', 'Description' => 'Enable SSLCommerz Sandbox mode.'),
+        'conversion_source' => array(
+            'FriendlyName' => 'Foreign Currency Conversion',
+            'Type' => 'dropdown',
+            'Options' => array(
+                'sslcommerz' => 'SSLCommerz Current Rate',
+                'whmcs' => 'WHMCS Configured Rate',
+            ),
+            'Default' => 'sslcommerz',
+            'Description' => 'For non-BDT invoices, either let SSLCommerz convert the invoice currency or convert to BDT using the current WHMCS currency rates before checkout.',
+        ),
         'ui_mode' => array(
             'FriendlyName' => 'Checkout UI Mode',
             'Type' => 'dropdown',

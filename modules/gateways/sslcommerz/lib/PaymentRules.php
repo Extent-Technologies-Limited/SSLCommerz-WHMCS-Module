@@ -2,10 +2,40 @@
 
 class SslCommerzPaymentRules
 {
+    public static function checkoutAmounts(array $gateway, array $invoice, callable $converter = null)
+    {
+        $invoiceAmount = (float) $invoice['amount'];
+        $invoiceCurrency = strtoupper((string) $invoice['currency']);
+        $processingAmount = $invoiceAmount;
+        $processingCurrency = $invoiceCurrency;
+
+        if (isset($gateway['conversion_source']) && $gateway['conversion_source'] === 'whmcs' && $invoiceCurrency !== 'BDT') {
+            if (!$converter) {
+                throw new RuntimeException('WHMCS BDT conversion rate is unavailable.');
+            }
+            $converted = (float) call_user_func($converter, $invoiceAmount, $invoiceCurrency, 'BDT');
+            if (!is_finite($converted) || $converted <= 0) {
+                throw new RuntimeException('WHMCS BDT conversion rate is unavailable.');
+            }
+            $processingAmount = round($converted, 2);
+            if ($processingAmount <= 0) {
+                throw new RuntimeException('WHMCS BDT conversion rate is unavailable.');
+            }
+            $processingCurrency = 'BDT';
+        }
+
+        return array(
+            'invoice_amount' => $invoiceAmount,
+            'invoice_currency' => $invoiceCurrency,
+            'processing_amount' => $processingAmount,
+            'processing_currency' => $processingCurrency,
+        );
+    }
+
     public static function sessionPayload(array $gateway, array $invoice, array $urls, $tranId)
     {
-        $amount = (float)$invoice['amount'];
-        $currency = strtoupper((string)$invoice['currency']);
+        $amount = isset($invoice['processing_amount']) ? (float)$invoice['processing_amount'] : (float)$invoice['amount'];
+        $currency = strtoupper(isset($invoice['processing_currency']) ? (string)$invoice['processing_currency'] : (string)$invoice['currency']);
         if ($currency === 'BDT' && ($amount < 10 || $amount > 500000)) {
             throw new InvalidArgumentException('SSLCommerz accepts direct BDT payments from 10.00 to 500000.00 BDT.');
         }
@@ -73,16 +103,20 @@ class SslCommerzPaymentRules
         }
 
         $currency = strtoupper(isset($attempt['currency']) ? (string) $attempt['currency'] : '');
+        $processingCurrency = strtoupper(isset($attempt['processing_currency']) && $attempt['processing_currency'] !== ''
+            ? (string) $attempt['processing_currency'] : $currency);
         $validatedCurrency = strtoupper(isset($validation['currency_type']) ? (string) $validation['currency_type'] : (isset($validation['currency']) ? (string) $validation['currency'] : ''));
-        if ($validatedCurrency !== $currency) {
+        if ($validatedCurrency !== $processingCurrency) {
             return self::reject('currency_mismatch');
         }
 
         $invoiceAmount = (float) (isset($attempt['invoice_amount']) ? $attempt['invoice_amount'] : 0);
-        $validatedInvoiceAmount = $currency === 'BDT'
+        $processingAmount = isset($attempt['processing_amount']) && (float)$attempt['processing_amount'] > 0
+            ? (float)$attempt['processing_amount'] : $invoiceAmount;
+        $validatedProcessingAmount = $processingCurrency === 'BDT'
             ? (float) (isset($validation['currency_amount']) && $validation['currency_amount'] !== '' ? $validation['currency_amount'] : (isset($validation['amount']) ? $validation['amount'] : 0))
             : (float) (isset($validation['currency_amount']) ? $validation['currency_amount'] : 0);
-        if ($invoiceAmount <= 0 || abs($invoiceAmount - $validatedInvoiceAmount) > 0.01) {
+        if ($invoiceAmount <= 0 || $processingAmount <= 0 || abs($processingAmount - $validatedProcessingAmount) > 0.01) {
             return self::reject('amount_mismatch');
         }
 

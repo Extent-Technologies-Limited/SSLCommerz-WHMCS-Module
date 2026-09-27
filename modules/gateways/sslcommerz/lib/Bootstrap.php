@@ -68,7 +68,14 @@ class SslCommerzBootstrap
         ));
         $ledger = new SslCommerzLedger();
         $loader = new SslCommerzWhmcsInvoiceLoader($systemUrl);
-        return new SslCommerzCheckoutService($api, $ledger, array($loader, 'load'), $gateway, $systemUrl);
+        return new SslCommerzCheckoutService(
+            $api,
+            $ledger,
+            array($loader, 'load'),
+            $gateway,
+            $systemUrl,
+            array($loader, 'convertCurrency')
+        );
     }
 }
 
@@ -118,5 +125,15 @@ class SslCommerzWhmcsInvoiceLoader
             'phone' => (string) $invoice->phonenumber,
             'returnurl' => $this->systemUrl . '/viewinvoice.php?id=' . (int) $invoice->invoiceid,
         );
+    }
+
+    public function convertCurrency($amount, $fromCode, $toCode)
+    {
+        $from = \WHMCS\Billing\Currency::where('code', strtoupper((string)$fromCode))->first();
+        $to = \WHMCS\Billing\Currency::where('code', strtoupper((string)$toCode))->first();
+        if (!$from || !$to) {
+            throw new RuntimeException('WHMCS BDT conversion rate is unavailable.');
+        }
+        return \WHMCS\Billing\Currency::convertBetween($from, (float)$amount, $to);
     }
 }
