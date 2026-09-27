@@ -1,12 +1,12 @@
 # SSLCommerz for WHMCS
 
-[![Release](https://img.shields.io/badge/release-1.0.0-1565c0.svg)](CHANGELOG.md)
+[![Release](https://img.shields.io/badge/release-1.0.1-1565c0.svg)](CHANGELOG.md)
 [![PHP](https://img.shields.io/badge/PHP-7.4%20%7C%208.1--8.3-777bb4.svg)](https://www.php.net/)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
 A production-ready SSLCommerz v4 payment gateway for WHMCS, with secure checkout, callback/IPN settlement, multi-currency reconciliation, refunds, and an optional administrator transaction-lookup add-on.
 
-Version **1.0.0** is the first public production release.
+Version **1.0.1** adds a selectable foreign-currency conversion policy, allowing non-BDT invoices to use either SSLCommerz's current rate or the rate configured in WHMCS.
 
 > This is an independent community integration. It is not an official product of, sponsored by, or affiliated with SSL Wireless/SSLCommerz or WHMCS.
 
@@ -16,6 +16,7 @@ Version **1.0.0** is the first public production release.
 - Server-side invoice reload and short-lived HMAC checkout tokens
 - Shared, idempotent browser callback and IPN payment processing
 - Strict transaction, amount, currency, risk, and identity validation
+- Selectable SSLCommerz or WHMCS foreign-currency conversion rates
 - Safe USD/foreign-currency to BDT settlement reconciliation
 - Full and partial refunds using the payment's captured exchange rate
 - Searchable local transaction ledger, remote refresh, and refund status lookup
@@ -37,7 +38,7 @@ Version **1.0.0** is the first public production release.
 2. Download the release ZIP and extract it.
 3. Copy the extracted `modules` directory into the WHMCS installation root, merging it with the existing `modules` directory.
 4. Open **Configuration > Apps & Integrations > Payments** and activate **SSLCommerz Payment Gateway**.
-5. Enter the store ID and password, select the environment and checkout mode, then save.
+5. Enter the store ID and password, select the environment, conversion policy, and checkout mode, then save.
 6. Optionally activate **SSLCommerz Transaction Lookup** under **System Settings > Addon Modules** and grant access to the required administrator roles.
 7. Complete a sandbox payment and verify both the invoice and **Billing > Gateway Log** before enabling live mode.
 
@@ -47,7 +48,14 @@ For upgrades, replace all gateway, callback, and add-on files together. Keep `le
 
 ## Configuration
 
-Configure the credentials, Test Mode, checkout mode, invoice transaction-ID preference, and gateway display name from the WHMCS payment gateway page. Never commit or share live store credentials.
+Configure the credentials, Test Mode, checkout mode, foreign-currency conversion source, invoice transaction-ID preference, and gateway display name from the WHMCS payment gateway page. Never commit or share live store credentials.
+
+**Foreign Currency Conversion** provides two policies for non-BDT invoices:
+
+- **SSLCommerz Current Rate** is the backward-compatible default. The module sends the invoice amount and currency, and SSLCommerz converts it to BDT using its current rate.
+- **WHMCS Configured Rate** converts the invoice balance to BDT on the server using the rates under **System Settings > Currencies**, then sends the locked BDT amount to SSLCommerz. BDT must exist as a configured WHMCS currency with a valid rate.
+
+Direct BDT invoices bypass conversion in both modes.
 
 ![SSLCommerz gateway settings in WHMCS](images/config.png)
 
@@ -88,7 +96,11 @@ Browser returns and IPNs use the same validation and settlement processor. Atomi
 
 ## Currency reconciliation
 
-The module keeps the customer's invoice amount separate from the BDT amount settled by SSLCommerz. A `0.10 USD` invoice settled as `12.34 BDT` is displayed as those two distinct values, never as `12.34 USD`.
+The module keeps the customer's invoice amount separate from the amount submitted for processing and the BDT amount settled by SSLCommerz. A `0.10 USD` invoice processed and settled as `12.34 BDT` is displayed as those two distinct values, never as `12.34 USD`.
+
+The conversion policy and processing amount are captured when the session is created. Later changes to the gateway setting or WHMCS currency rates do not alter callback validation or refund calculations for that transaction.
+
+Checkout uses the invoice's current outstanding balance, including WHMCS ledger adjustments, rather than only the original line-item total. The module does not add a conversion surcharge or convenience fee.
 
 For non-BDT invoices, refunds reuse the BDT-per-invoice-currency rate captured during payment. Historical foreign-currency payments without a captured rate are refused because applying a current rate could over-refund. Refund totals are capped at the remaining captured BDT balance, and durable reservations keep concurrent attempts idempotent.
 
@@ -110,13 +122,14 @@ The administrator add-on provides a minimal dashboard for recent transactions, m
 
 ## Troubleshooting
 
-- **Popup reports an error in communication:** verify all 1.0.0 files were uploaded together and clear the PHP opcode cache. The popup endpoint accepts SSLCommerz's live `cart_json` wrapper while authenticating the signed invoice token.
+- **Popup reports an error in communication:** verify all 1.0.1 files were uploaded together and clear the PHP opcode cache. The popup endpoint accepts SSLCommerz's live `cart_json` wrapper while authenticating the signed invoice token.
 - **New Hosted opens the legacy page:** confirm `new_hosted` is saved. Live New Hosted rewrites only SSLCommerz's exact approved live session host to `pay.sslcommerz.com`.
 - **Unable to start payment:** inspect the newest `SESSION_FAILED` record in the lookup add-on or **Billing > Gateway Log**. Local, transport, and provider failures are logged while the customer sees a generic message.
+- **WHMCS rate conversion is unavailable:** add and configure BDT under **System Settings > Currencies**, verify both source and BDT rates are positive, then retry from a freshly loaded invoice.
 - **Invoice remains unpaid:** confirm the public HTTPS callback and IPN endpoints are reachable and that the response matches the original invoice currency amount and settled BDT amount.
-- **Customer is logged out after return:** confirm the 1.0.0 callback files replaced older scripts and that no proxy or plug-in injects a session cookie into callback responses.
+- **Customer is logged out after return:** confirm the 1.0.1 callback files replaced older scripts and that no proxy or plug-in injects a session cookie into callback responses.
 - **Refund returns `REQUEST_FROM_INVALID_SOURCE`:** register the server's public outbound IP with SSLCommerz, then retry the same refund.
-- **Lookup View reports an expired token:** clear the opcode cache. Version 1.0.0 uses WHMCS's native administrator CSRF token and has no custom rotating lookup token.
+- **Lookup View reports an expired token:** clear the opcode cache. Version 1.0.1 uses WHMCS's native administrator CSRF token and has no custom rotating lookup token.
 
 ## Development
 
@@ -144,3 +157,4 @@ GitHub Actions runs multi-version PHP syntax checks and builds the installable Z
 - Changes are recorded in [CHANGELOG.md](CHANGELOG.md).
 
 Released under the [MIT License](LICENSE). Copyright © 2026 Extent Technologies Limited.
+Developed and maintained by [MD Abu Bakkar](https://www.google.com/search?kgmid=/g/11zwqn5szs).

@@ -20,6 +20,7 @@ class SslCommerzLedger
                 'id' => 'increments', 'invoice_id' => 'integer', 'tran_id' => 'string:30',
                 'val_id' => 'string:100?', 'bank_tran_id' => 'string:100?', 'sessionkey' => 'string:128?',
                 'status' => 'string:32', 'currency' => 'string:8', 'invoice_amount' => 'decimal:16,2',
+                'processing_currency' => 'string:8?', 'processing_amount' => 'decimal:16,2',
                 'bdt_amount' => 'decimal:16,2', 'currency_rate_bdt' => 'decimal:18,8',
                 'refunded_bdt' => 'decimal:16,2', 'refund_ref_id' => 'string:100?',
                 'refund_trans_id' => 'string:30?', 'card_no' => 'string:80?', 'card_type' => 'string:100?',
@@ -78,6 +79,8 @@ class SslCommerzLedger
                 $table->string('status', 32)->default('initiated')->index();
                 $table->string('currency', 8);
                 $table->decimal('invoice_amount', 16, 2)->default(0);
+                $table->string('processing_currency', 8)->nullable();
+                $table->decimal('processing_amount', 16, 2)->default(0);
                 $table->decimal('bdt_amount', 16, 2)->default(0);
                 $table->decimal('currency_rate_bdt', 18, 8)->default(0);
                 $table->decimal('refunded_bdt', 16, 2)->default(0);
@@ -163,11 +166,16 @@ class SslCommerzLedger
     {
         if (empty($transaction['tran_id'])) { return false; }
         $tranId = (string)$transaction['tran_id'];
-        $currency = strtoupper(trim(isset($transaction['currency_type']) ? (string)$transaction['currency_type'] : (isset($transaction['currency']) ? (string)$transaction['currency'] : '')));
-        $invoiceAmount = isset($transaction['currency_amount']) && (float)$transaction['currency_amount'] > 0
+        $existing = $this->find($tranId);
+        $processingCurrency = strtoupper(trim(isset($transaction['currency_type']) ? (string)$transaction['currency_type'] : (isset($transaction['currency']) ? (string)$transaction['currency'] : '')));
+        $processingAmount = isset($transaction['currency_amount']) && (float)$transaction['currency_amount'] > 0
             ? (float)$transaction['currency_amount'] : 0;
         $bdtAmount = isset($transaction['amount']) && (float)$transaction['amount'] > 0 ? (float)$transaction['amount'] : 0;
-        if ($invoiceAmount <= 0 && $currency === 'BDT') { $invoiceAmount = $bdtAmount; }
+        if ($processingAmount <= 0 && $processingCurrency === 'BDT') { $processingAmount = $bdtAmount; }
+        $invoiceCurrency = $existing && !empty($existing->currency)
+            ? strtoupper((string)$existing->currency) : $processingCurrency;
+        $invoiceAmount = $existing && isset($existing->invoice_amount) && (float)$existing->invoice_amount > 0
+            ? (float)$existing->invoice_amount : $processingAmount;
         $safeTransaction = class_exists('SslCommerzSupport') ? SslCommerzSupport::redact($transaction) : $transaction;
         $fields = array('raw_response'=>json_encode($safeTransaction));
         if (isset($transaction['value_a']) && (int)$transaction['value_a'] > 0) { $fields['invoice_id'] = (int)$transaction['value_a']; }
@@ -181,11 +189,17 @@ class SslCommerzLedger
         if (isset($transaction['status']) && trim((string)$transaction['status']) !== '') {
             $fields['status'] = strtolower(trim((string)$transaction['status']));
         }
-        if ($currency !== '') { $fields['currency'] = $currency; }
-        if ($invoiceAmount > 0) { $fields['invoice_amount'] = $invoiceAmount; }
+        if ($processingCurrency !== '') { $fields['processing_currency'] = $processingCurrency; }
+        if ($processingAmount > 0) { $fields['processing_amount'] = $processingAmount; }
+        if (!$existing || empty($existing->currency)) {
+            if ($invoiceCurrency !== '') { $fields['currency'] = $invoiceCurrency; }
+        }
+        if (!$existing || !isset($existing->invoice_amount) || (float)$existing->invoice_amount <= 0) {
+            if ($invoiceAmount > 0) { $fields['invoice_amount'] = $invoiceAmount; }
+        }
         if ($bdtAmount > 0) { $fields['bdt_amount'] = $bdtAmount; }
         if ($invoiceAmount > 0 && $bdtAmount > 0) {
-            $fields['currency_rate_bdt'] = $currency === 'BDT' ? 1 : round($bdtAmount/$invoiceAmount, 8);
+            $fields['currency_rate_bdt'] = $invoiceCurrency === 'BDT' ? 1 : round($bdtAmount/$invoiceAmount, 8);
         }
         foreach (array('card_no','card_type','card_brand','card_issuer','risk_title') as $detail) {
             if (isset($transaction[$detail]) && trim((string)$transaction[$detail]) !== '') {
@@ -195,7 +209,6 @@ class SslCommerzLedger
         if (isset($transaction['risk_level']) && is_numeric($transaction['risk_level'])) {
             $fields['risk_level'] = (int)$transaction['risk_level'];
         }
-        $existing = $this->find($tranId);
         if ($existing) { return $this->update($tranId, $fields); }
         if (!isset($fields['invoice_id'], $fields['invoice_amount'], $fields['currency'])
             || $fields['invoice_id'] <= 0 || $fields['invoice_amount'] <= 0 || $fields['currency'] === '') { return false; }
@@ -376,6 +389,8 @@ class SslCommerzLedger
     private function migrateExistingTable($capsule)
     {
         $definitions = array(
+            'processing_currency' => function ($t) { $t->string('processing_currency', 8)->nullable(); },
+            'processing_amount' => function ($t) { $t->decimal('processing_amount', 16, 2)->default(0); },
             'currency_rate_bdt' => function ($t) { $t->decimal('currency_rate_bdt', 18, 8)->default(0); },
             'refunded_bdt' => function ($t) { $t->decimal('refunded_bdt', 16, 2)->default(0); },
             'refund_trans_id' => function ($t) { $t->string('refund_trans_id', 30)->nullable(); },

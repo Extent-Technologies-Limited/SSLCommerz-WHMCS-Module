@@ -2,6 +2,18 @@
 
 All notable public changes are documented here.
 
+## 1.0.1 - 2026-09-27
+
+### Added
+
+- Added a gateway setting that selects SSLCommerz's current conversion rate or the configured WHMCS rate for non-BDT invoices.
+
+### Changed
+
+- Locked the original invoice amount and gateway processing amount separately for callback validation, reconciliation, and refunds.
+- Documented that checkout converts the current outstanding invoice balance without adding a module-level surcharge or convenience fee.
+- Updated the gateway configuration documentation and screenshot for the new conversion setting.
+
 ## 1.0.0 - 2026-09-14
 
 First public production release.

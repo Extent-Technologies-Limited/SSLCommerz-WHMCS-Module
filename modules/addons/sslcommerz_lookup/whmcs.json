@@ -2,7 +2,7 @@
   "schema": "1.0",
   "type": "whmcs-addons",
   "name": "sslcommerz_lookup",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "license": "MIT",
   "category": "utilities",
   "description": {

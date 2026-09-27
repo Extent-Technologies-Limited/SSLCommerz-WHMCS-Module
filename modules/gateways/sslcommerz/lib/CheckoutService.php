@@ -10,15 +10,17 @@ class SslCommerzCheckoutService
     private $invoiceLoader;
     private $gateway;
     private $systemUrl;
+    private $currencyConverter;
     private $lastDiagnostic = array();
 
-    public function __construct($api, $ledger, callable $invoiceLoader, array $gateway, $systemUrl)
+    public function __construct($api, $ledger, callable $invoiceLoader, array $gateway, $systemUrl, callable $currencyConverter = null)
     {
         $this->api = $api;
         $this->ledger = $ledger;
         $this->invoiceLoader = $invoiceLoader;
         $this->gateway = $gateway;
         $this->systemUrl = rtrim((string) $systemUrl, '/');
+        $this->currencyConverter = $currencyConverter;
     }
 
     public function initiate($invoiceId)
@@ -36,6 +38,35 @@ class SslCommerzCheckoutService
 
         $tranId = SslCommerzSupport::transactionId($invoice['invoiceid']);
         $callback = $this->systemUrl . '/modules/gateways/callback/sslcommerz.php';
+        $this->lastDiagnostic = array(
+            'invoice_id' => (int)$invoice['invoiceid'],
+            'tran_id' => $tranId,
+            'amount' => (float)$invoice['amount'],
+            'currency' => strtoupper((string)$invoice['currency']),
+            'conversion_source' => isset($this->gateway['conversion_source']) && $this->gateway['conversion_source'] === 'whmcs'
+                ? 'whmcs' : 'sslcommerz',
+        );
+        try {
+            $amounts = SslCommerzPaymentRules::checkoutAmounts($this->gateway, $invoice, $this->currencyConverter);
+        } catch (Throwable $error) {
+            $message = $this->redactDiagnosticText($error->getMessage());
+            $this->lastDiagnostic['preflight_error'] = $message;
+            try {
+                $this->ledger->begin(array(
+                    'invoice_id' => (int) $invoice['invoiceid'],
+                    'tran_id' => $tranId,
+                    'status' => 'session_failed',
+                    'currency' => strtoupper((string) $invoice['currency']),
+                    'invoice_amount' => (float) $invoice['amount'],
+                    'raw_response' => json_encode(array('status'=>'PREFLIGHT_FAILED','failedreason'=>$message)),
+                ));
+            } catch (Throwable $ignored) {
+                // Preserve the actionable conversion error if diagnostic persistence also fails.
+            }
+            throw $error;
+        }
+        $invoice = array_merge($invoice, $amounts);
+
         $urls = array(
             'success_url' => $callback,
             'fail_url' => $callback,
@@ -43,11 +74,9 @@ class SslCommerzCheckoutService
             'ipn_url' => $this->systemUrl . '/modules/gateways/callback/sslcommerz_ipn.php',
             'return_url' => isset($invoice['returnurl']) ? $invoice['returnurl'] : $this->systemUrl . '/viewinvoice.php?id=' . (int) $invoice['invoiceid'],
         );
-        $this->lastDiagnostic = array(
-            'invoice_id' => (int)$invoice['invoiceid'],
-            'tran_id' => $tranId,
-            'amount' => (float)$invoice['amount'],
-            'currency' => strtoupper((string)$invoice['currency']),
+        $this->lastDiagnostic = array_merge($this->lastDiagnostic, array(
+            'processing_amount' => (float)$invoice['processing_amount'],
+            'processing_currency' => strtoupper((string)$invoice['processing_currency']),
             'checkout_mode' => SslCommerzSupport::checkoutMode(isset($this->gateway['ui_mode']) ? $this->gateway['ui_mode'] : ''),
             'test_mode' => isset($this->gateway['testmode']) && $this->gateway['testmode'] === 'on',
             'customer_fields_present' => array(
@@ -60,7 +89,7 @@ class SslCommerzCheckoutService
                 'phone' => isset($invoice['phone']) && trim((string)$invoice['phone']) !== '',
             ),
             'callback_host' => parse_url($callback, PHP_URL_HOST),
-        );
+        ));
 
         $this->ledger->begin(array(
             'invoice_id' => (int) $invoice['invoiceid'],
@@ -68,6 +97,8 @@ class SslCommerzCheckoutService
             'status' => 'initiated',
             'currency' => strtoupper((string) $invoice['currency']),
             'invoice_amount' => (float) $invoice['amount'],
+            'processing_currency' => strtoupper((string) $invoice['processing_currency']),
+            'processing_amount' => (float) $invoice['processing_amount'],
         ));
 
         try {
